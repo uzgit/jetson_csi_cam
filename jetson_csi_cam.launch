@@ -1,11 +1,13 @@
+<?xml version="1.0"?>
+
 <launch>
   <!-- Command Line Arguments -->
   <arg name="sensor_id" default="0" />                       <!-- The sensor id of the camera -->
   <arg name="cam_name" default="csi_cam_$(arg sensor_id)" /> <!-- The name of the camera (corrsponding to the camera info) -->
   <arg name="frame_id" default="/$(arg cam_name)_link" />    <!-- The TF frame ID. -->
   <arg name="sync_sink" default="true" />                    <!-- Synchronize the app sink. Setting this to false may resolve problems with sub-par framerates. -->
-  <arg name="width" default="1920" />                        <!-- Image Width -->
-  <arg name="height" default="1080" />                       <!-- Image Height -->
+  <arg name="width" default="640" />                        <!-- Image Width -->
+  <arg name="height" default="480" />                       <!-- Image Height -->
   <arg name="fps" default="30" />                            <!-- Desired framerate. True framerate may not reach this if set too high. -->
 
   <!-- Make arguments available to parameter server -->
@@ -15,16 +17,92 @@
   <param name="$(arg cam_name)/target_fps" type="int" value="$(arg fps)" />
 
   <!-- Define the GSCAM pipeline -->
-  <env name="GSCAM_CONFIG" value="nvcamerasrc sensor-id=$(arg sensor_id) ! video/x-raw(memory:NVMM),
-    width=(int)$(arg width), height=(int)$(arg height), format=(string)I420, framerate=(fraction)$(arg fps)/1 ! 
-    nvvidconv flip-method=2 ! video/x-raw, format=(string)BGRx ! videoconvert ! video/x-raw, format=(string)BGR" />
+  <env name="GSCAM_CONFIG" value="nvarguscamerasrc sensor-id=$(arg sensor_id) ! video/x-raw(memory:NVMM),
+    width=(int)$(arg width), height=(int)$(arg height), format=(string)NV12, framerate=(fraction)$(arg fps)/1 ! 
+    nvvidconv flip-method=counterclockwise ! video/x-raw, format=(string)BGRx ! videoconvert" />
+    <!--nvvidconv flip-method=counterclockwise ! video/x-raw, format=(string)BGRx ! videoconvert ! video/x-raw, format=(string)BGR" /-->
 
   <!-- Start the GSCAM node -->
-  <node pkg="gscam" type="gscam" name="$(arg cam_name)">
+  <node respawn="true" pkg="gscam" type="gscam" name="$(arg cam_name)">
     <param name="camera_name" value="$(arg cam_name)" />
     <param name="frame_id" value="$(arg frame_id)" />
     <param name="sync_sink" value="$(arg sync_sink)" />
     <remap from="camera/image_raw" to="$(arg cam_name)/image_raw" />
     <remap from="/set_camera_info" to="$(arg cam_name)/set_camera_info" />
   </node>
+
+    <arg name="camInfo" default="/csi_cam_0/camera_info" doc="camera_info topic"/>
+    <arg name="camRaw" default="/csi_cam_0/image_raw" doc="image_raw topic"/>
+
+    <arg name="idBits" default="2" doc="Number of encoded bits"/>
+    <arg name="idSamples" default="360" doc="Number of samples to detect ID"/>
+    <arg name="hammingDist" default="1" doc="Hamming distance used for ID"/>
+    <arg name="maxMarkers" default="1" doc="Maximum possible amount of markers to be tracked"/>
+    <arg name="useGui" default="false" doc="Whether to use GUI"/>
+
+    <arg name="fontPath" value="$(find whycon_ros)/etc/font.ttf"/>
+    <arg name="calibDefPath" value="$(find whycon_ros)/etc/default.cal"/>
+
+    <node respawn="true" pkg="whycon_ros" type="whycon_ros" name="whycon_ros" output="screen" args="$(arg fontPath) $(arg calibDefPath)" launch-prefix="">
+
+        <remap from="/camera/camera_info" to="$(arg camInfo)"/>
+        <remap from="/camera/image_raw" to="$(arg camRaw)"/>
+
+        <param name="useGui" value="$(arg useGui)"/>
+        <param name="idBits" value="$(arg idBits)"/>
+        <param name="idSamples" value="$(arg idSamples)"/>
+        <param name="hammingDist" value="$(arg hammingDist)"/>
+        <param name="maxMarkers" value="$(arg maxMarkers)"/>
+
+    </node>
+
+        <node respawn="true" name="pid_x" pkg="pid" type="controller" ns="pid" output="log">
+                <param name="node_name" value="pid_x"/>
+                <param name="Kp" value="-0.3"/>
+                <param name="Ki" value="-0.5"/>
+                <param name="Kd" value="-0.1"/>
+                <param name="upper_limit" value="1.0"/>
+                <param name="lower_limit" value="-1.0"/>
+                <param name="windup_limit" value="1.0"/>
+                <!--param name="upper_limit" value="1900"/>
+                <param name="lower_limit" value="1100"/>
+                <param name="windup_limit" value="200"/-->
+                <param name="max_loop_frequency" value="100.0"/>
+                <param name="min_loop_frequency" value="100.0"/>
+                <remap from="state" to="/landing_pad/pixel_position/x"/>
+                <remap from="setpoint" to="/pid/camera/setpoint/x"/>
+                <remap from="control_effort" to="/pid/camera/control_effort/x"/>
+                <remap from="pid_enable" to="/pid/camera/enable/x"/>
+                <param name="reconfigure_topic" value="reconfigure_topic/x"/>
+        </node>
+
+        <node respawn="true" name="pid_y" pkg="pid" type="controller" ns="pid" output="log">
+                <param name="node_name" value="pid_y"/>
+		<!-- roughly acceptable -->
+		<param name="Kp" value="0.3"/> 
+                <param name="Ki" value="0.5"/>
+                <param name="Kd" value="0.1"/>
+		<!-- these are too much -->
+		<!--param name="Kp" value="0.5"/>
+                <param name="Ki" value="0.0"/>
+                <param name="Kd" value="0.9"/-->
+                <param name="upper_limit" value="1.0"/>
+                <param name="lower_limit" value="-1.0"/>
+                <param name="windup_limit" value="1.0"/>
+                <!--param name="upper_limit" value="1900"/>
+                <param name="lower_limit" value="1100"/>
+                <param name="windup_limit" value="200"/-->
+                <param name="max_loop_frequency" value="100.0"/>
+                <param name="min_loop_frequency" value="100.0"/>
+                <remap from="state" to="/landing_pad/pixel_position/y"/>
+                <remap from="setpoint" to="/pid/camera/setpoint/y"/>
+                <remap from="control_effort" to="/pid/camera/control_effort/y"/>
+                <remap from="pid_enable" to="/pid/camera/enable/y"/>
+                <param name="reconfigure_topic" value="reconfigure_topic/y"/>
+        </node>
+
+        <node respawn="true" name="gimbal_controller" pkg="gimbal_controller" type="gimbal_controller" />
+
+    <!--include file="($find gimbal_controller)/launch/gimbal_controller.launch" /-->
+
 </launch>
